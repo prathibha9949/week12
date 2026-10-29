@@ -1,66 +1,62 @@
-
 pipeline {
     agent any
 
     environment {
-        IMAGE = 'prathibha9949/selenium-testing-demo-app:latest'
-        CONTAINER_NAME = 'selenium-testing-demo-ci'
+        APP_IMAGE = 'prathibha9949/registration-app:latest'
+        CONTAINER_NAME = 'registration-app-test'
+        APP_URL = 'http://127.0.0.1:5000'
     }
 
     stages {
-        stage('Build Docker Image') {
-            steps {
-                bat 'docker build -t %IMAGE% .'
-            }
-        }
 
-        stage('Start Container') {
+        stage('Install Dependencies') {
             steps {
                 bat '''
-                docker rm -f %CONTAINER_NAME% 2>NUL
-                docker run -d --name %CONTAINER_NAME% -p 5001:5000 %IMAGE%
-                timeout /t 5 /nobreak >NUL
+                    python -m pip install --upgrade pip
+                    python -m pip install Flask pytest selenium
                 '''
             }
         }
 
-        stage('Install Test Dependencies') {
+        stage('Build Docker Image') {
             steps {
-                bat 'python -m pip install -r requirements.txt'
+                bat 'docker build -t %APP_IMAGE% .'
+            }
+        }
+
+        stage('Start Application') {
+            steps {
+                bat '''
+                    docker rm -f %CONTAINER_NAME% 2>NUL
+                    docker run -d --name %CONTAINER_NAME% -p 5000:5000 %APP_IMAGE%
+
+                    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ready = $false; for ($i=0; $i -lt 30; $i++) { try { Invoke-WebRequest -Uri '%APP_URL%/register' -UseBasicParsing -TimeoutSec 3 | Out-Null; $ready = $true; break } catch { Start-Sleep -Seconds 2 } }; if (-not $ready) { docker logs %CONTAINER_NAME%; exit 1 }; Write-Output 'Application is ready'"
+                '''
             }
         }
 
         stage('Run Selenium Tests') {
             steps {
-                bat 'set APP_URL=http://localhost:5001&& python -m pytest -v tests'
+                bat 'python -m pytest -v tests/test_registrationapp.py --junitxml=test-results.xml'
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKERHUB_USERNAME',
-                        passwordVariable: 'DOCKERHUB_PASSWORD'
-                    )
-                ]) {
-                    bat '''
-                    echo %DOCKERHUB_PASSWORD% | docker login -u %DOCKERHUB_USERNAME% --password-stdin
-                    docker push %IMAGE%
-                    docker logout
-                    '''
-                }
+                bat '''
+                    docker tag %APP_IMAGE% prathibha9949/registration-app:%BUILD_NUMBER%
+                    docker push %APP_IMAGE%
+                    docker push prathibha9949/registration-app:%BUILD_NUMBER%
+                '''
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
                 bat '''
-                kubectl apply -f deployment.yaml
-                kubectl apply -f service.yaml
-                kubectl rollout restart deployment/selenium-testing-demo-app
-                kubectl rollout status deployment/selenium-testing-demo-app --timeout=120s
+                    kubectl apply -f deployment.yaml
+                    kubectl apply -f service.yaml
+                    kubectl rollout status deployment/kubedemoapp --timeout=120s
                 '''
             }
         }
@@ -69,6 +65,8 @@ pipeline {
     post {
         always {
             bat 'docker rm -f %CONTAINER_NAME% 2>NUL'
+            junit testResults: 'test-results.xml',
+                  allowEmptyResults: true
         }
     }
 }
