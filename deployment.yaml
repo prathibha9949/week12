@@ -1,0 +1,27 @@
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: selenium-testing-demo-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: selenium-testing-demo-app
+  template:
+    metadata:
+      labels:
+        app: selenium-testing-demo-app
+    spec:
+      containers:
+        - name: registration-app
+          image: prathibha9949/selenium-testing-demo-app:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
